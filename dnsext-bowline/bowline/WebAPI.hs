@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module WebAPI (
     bindAPI,
@@ -12,20 +13,39 @@ import Data.Functor
 import qualified Data.List.NonEmpty as NE
 import Data.String
 import qualified Network.HTTP.Types as HTTP
+import Network.HTTP.Types.Header (hContentType, hContentDisposition)
 import Network.Socket
 import Network.Wai
 import Network.Wai.Handler.Warp hiding (run)
+import System.Posix (getSystemID, nodeName)
 
 import DNS.Iterative.Server (withLocationIOE)
 
 import Config
 import Types
 
+import Text.Heredoc (heredocFile)
+
 doStats :: Control -> IO Response
 doStats Control{..} = responseBuilder HTTP.ok200 [] <$> getStats
 
 doWStats :: Control -> IO Response
 doWStats Control{..} = responseBuilder HTTP.ok200 [] <$> getWStats
+
+doMacosProf :: IO Response
+doMacosProf = do
+  hostname <- nodeName <$> getSystemID
+  let txt = fromString $ xmls hostname
+
+  return $ responseBuilder HTTP.ok200 [
+    (hContentType, "application/xml; charset=UTF-8"),
+      (hContentDisposition, "attachment; filename=bowline.mobileconfig")
+    ] txt
+  where
+    uuidDoH = fromString $ "0F54C4EF-5D3D-47B7-AC34-21E2F307D69E"
+    uuidDoT = fromString $ "03B5987F-3EFD-4479-97CF-591D469B3F00"
+    uuidMain = fromString $ "0E6EDCAE-81BF-4A8B-85D7-7BC3D031EC76"
+    xmls hostname = $(heredocFile "./bowline/template.mobileconfig")
 
 {- FOURMOLU_DISABLE -}
 doHelp :: IO Response
@@ -38,6 +58,7 @@ doHelp = return $ responseBuilder HTTP.ok200 [] txt
         , ("/reopen-log"  , "reopen logfile when file logging")
         , ("/reload"      , "reload bowline without keeping cache")
         , ("/keep-cache"  , "reload bowline with keeping cache")
+        , ("/macos-prof"  , "download macos DNSsettings profile for this resolver")
         , ("/quit"        , "quit bowline")
         , ("/help"        , "show this help texts")
         ]
@@ -58,6 +79,7 @@ app mng req sendResp = getResp >>= sendResp
             "/reopen-log"  -> reopenLog mng $> ok
             "/reload"      -> reloadCmd mng Reload    failed ok
             "/keep-cache"  -> reloadCmd mng KeepCache failed ok
+            "/macos-prof"  -> doMacosProf
             "/quit"        -> quitCmd mng Quit $> ok
             "/help"        -> doHelp
             "/"            -> doHelp
