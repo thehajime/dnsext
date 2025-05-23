@@ -128,3 +128,19 @@ jobs:
       with:
         path: ${{ env.PACKAGE_FILENAME }}
         name: ${{ env.PACKAGE_FILENAME }}
+    - uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: 2.7
+    - name: release to packagecloud.io
+      if: gitHub.event_name == 'release' && runner.os == 'linux'
+      run: |
+        # Instsall packagecloud CLI
+        gem install package_cloud
+        # push all versions and delete it in advance
+        for distro_version in ${{ env.DISTRO_LIST }} ; do
+            package_cloud yank ukontainer/bowline/$distro_version ${{ env.PACKAGE_FILENAME }} || true
+            package_cloud push ukontainer/bowline/$distro_version ${{ env.PACKAGE_FILENAME }}
+        done
+      env:
+        PACKAGECLOUD_TOKEN: ${{ secrets.PACKAGECLOUD_TOKEN }}
+        DISTRO_LIST: "debian/bookworm"
