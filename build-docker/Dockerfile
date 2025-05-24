@@ -20,7 +20,9 @@ ARG GHC_PARALLEL
 ARG CABAL_PARALLEL
 
 ## Install tools
-RUN <<EOF
+RUN \
+  --mount=type=cache,target=/var/cache/apt,sharing=locked \
+  --mount=type=cache,target=/var/lib/apt,sharing=locked <<EOF
 set -e -x
 case ${BUILDER_IMAGE} in
   debian:*)
@@ -103,7 +105,7 @@ install -m 400 privkey.pem fullchain.pem /opt/bowline/etc/
 EOF
 
 ## Build and Install
-RUN <<EOF
+RUN --mount=type=cache,target=/root/.cabal <<EOF
 set -e -x
 [ ! -r ~/builder-path ] || . ~/builder-path
 cabal v2-update
