@@ -5,6 +5,9 @@ on:
     branches: [ '*' ]
   pull_request:
     branches: [ '*' ]
+  release:
+    types:
+      - created
   workflow_dispatch:
     inputs:
       debug_enabled:
@@ -13,7 +16,7 @@ on:
         default: false
 
 jobs:
-  build:
+  build-deb-and-tests:
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -128,7 +131,16 @@ jobs:
       with:
         path: ${{ env.PACKAGE_FILENAME }}
         name: ${{ env.PACKAGE_FILENAME }}
+    - name: Github Releases
+      if: gitHub.event_name == 'release'
+      uses: softprops/action-gh-release@v2
+      with:
+        prerelease: true
+        token: ${{ secrets.GITHUB_TOKEN }}
+        files: |
+          ${{ env.PACKAGE_FILENAME }}
     - uses: ruby/setup-ruby@v1
+      if: gitHub.event_name == 'release' && runner.os == 'linux'
       with:
         ruby-version: 2.7
     - name: release to packagecloud.io
