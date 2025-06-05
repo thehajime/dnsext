@@ -16,7 +16,8 @@ jobs:
       fail-fast: false
       matrix:
         os:  [ 'ubuntu-latest', 'macOS-latest' ]
-        ghc: [ '9.2', '9.4', '9.6', '9.8', '9.10', '9.12' ]
+        ghc: [ '9.6' ]
+        ghc_opt: [ '-O0', '-O2' ]
         include:
           - os: ubuntu-latest
             arch: amd64
@@ -48,12 +49,12 @@ jobs:
         echo "cache=${{ runner.os }}-build-${{ env.cache-name }}-${ghc_version}-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/cabal.project') }}" > "$GITHUB_OUTPUT"
         echo "ghc_version=$ghc_version" >> "$GITHUB_OUTPUT"
 
-    - name: Restore Cache
-      uses: actions/cache/restore@v4
-      if: ${{ github.ref_name != 'ci-uc' }}
-      with:
-        path: ~/.cabal
-        key: ${{ steps.params.outputs.cache }}
+#    - name: Restore Cache
+#      uses: actions/cache/restore@v4
+#      if: ${{ github.ref_name != 'ci-uc' }}
+#      with:
+#        path: ~/.cabal
+#        key: ${{ steps.params.outputs.cache }}
 
     - name: Install doctest
       id: doctest-dep
@@ -72,11 +73,11 @@ jobs:
       id: inst-dep
       shell: bash
       run: |
-        if cabal v2-build --offline --only-dependencies ${{ env.build-targets }}
+        if cabal v2-build --offline --only-dependencies ${{ env.build-targets }} ${{ matrix.ghc_opt }}
         then
           echo "installed=false" >> "$GITHUB_OUTPUT"
         else
-          cabal v2-build --only-dependencies ${{ env.build-targets }}
+          cabal v2-build --only-dependencies ${{ env.build-targets }} ${{ matrix.ghc_opt }}
           echo "installed=true" >> "$GITHUB_OUTPUT"
         fi
 
@@ -88,7 +89,8 @@ jobs:
         key: ${{ steps.params.outputs.cache }}
 
     - name: Build
-      run: cabal v2-build ${{ env.build-targets }}
+      run: |
+        cabal v2-build ${{ env.build-targets }} ${{ matrix.ghc_opt }}
 
     - name: Run tests
       run: env DISABLE_V6_NS=1 cabal v2-test --test-show-details=streaming all:tests
@@ -108,17 +110,17 @@ jobs:
       run: |
         mkdir dist
         for name in bowline dug ; do
-          cp -L $(cabal list-bin ./dnsext-bowline:$name) dist/$name-${{ matrix.osname }}-${{ matrix.arch }}
+          cp -L $(cabal list-bin ./dnsext-bowline:$name ${{ matrix.ghc_opt }}) dist/$name-${{ matrix.osname }}-${{ matrix.arch }}
           strip dist/$name-${{ matrix.osname }}-${{ matrix.arch }}
           ls -l dist/$name-${{ matrix.osname }}-${{ matrix.arch }}
         done
-    - name: Upload artifact
-      if: matrix.ghc == '9.6'
-      uses: actions/upload-artifact@v4
-      with:
-        path: |
-          dist/*
-        name: dnsext-bowline-${{ runner.os }}-${{ runner.arch }}
+#    - name: Upload artifact
+#      if: matrix.ghc == '9.6'
+#      uses: actions/upload-artifact@v4
+#      with:
+#        path: |
+#          dist/*
+#        name: dnsext-bowline-${{ runner.os }}-${{ runner.arch }}
     - name: Github Releases
       if: gitHub.event_name == 'release' && matrix.ghc == '9.6'
       uses: softprops/action-gh-release@v2
