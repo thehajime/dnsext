@@ -18,11 +18,12 @@ import Data.ByteString (ByteString)
 import Data.ByteString.Short ()
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.IP ()
-import Data.List (intercalate)
+import Data.List (intercalate, sort)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
-import Data.Maybe (listToMaybe)
+import Data.Maybe (fromMaybe, listToMaybe)
 import Data.String (fromString)
+import GHC.Conc.Sync (ThreadStatus, listThreads, threadLabel, threadStatus)
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
 import System.Console.GetOpt (
@@ -233,6 +234,7 @@ mainLoop opts wait send q putLog env = loop
     unsafeHead [] = error "unsafeHead"
     unsafeHead (x : _) = x
     loop = do
+        printThreads putLog
         wait
         er <- lookupSVCBInfo env
         case er of
@@ -288,3 +290,19 @@ makeConf ref addrs =
         }
   where
     actions = lconfActions defaultLookupConf
+
+----------------------------------------------------------------
+
+printThreads :: PutLog -> IO ()
+printThreads putLog = threadSummary >>= mapM_ (putLog . toLogStr . showT)
+  where
+    showT (i, l, s) = i ++ " " ++ l ++ ": " ++ show s ++ "\n"
+
+threadSummary :: IO [(String, String, ThreadStatus)]
+threadSummary = (sort <$> listThreads) >>= mapM summary
+  where
+    summary t = do
+        let idstr = drop 9 $ show t
+        l <- fromMaybe "(no name)" <$> threadLabel t
+        s <- threadStatus t
+        return (idstr, l, s)
