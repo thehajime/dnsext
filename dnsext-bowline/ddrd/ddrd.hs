@@ -208,10 +208,8 @@ main = do
                     , send = \(bs, sa) -> void $ NSB.sendTo s bs sa
                     , recv = NSB.recvFrom s 2048
                     , wait = do
-                        putL "Waiting...\n"
                         wait' <- waitReadSocketSTM s
                         atomically wait'
-                        putL "Waiting...done\n"
                     , putLog = putL
                     }
         void $ forkIO $ do
@@ -231,16 +229,15 @@ worker :: Op (ByteString, SockAddr) -> Resolver -> IO ()
 worker Op{..} resolver = do
     mytid <- myThreadId
     labelThread mytid "worker"
+    let tid = drop 9 $ show mytid
     forever $ do
-        putLog $ toLogStr $ show mytid <> "...\n"
         (bs, sa) <- dequeue
-        putLog $ toLogStr $ show mytid <> "...done\n"
         case decode bs of
             Left _ -> putLog "Decode error\n"
             Right msg -> case question msg of
                 [] -> putLog "No questions\n"
                 qry : _ -> do
-                    putLog $ toLogStr $ "Q: " ++ pprDomain (qname qry) ++ " " ++ show (qtype qry) ++ "\n"
+                    putLog $ toLogStr $ tid ++ " Q: " ++ pprDomain (qname qry) ++ " " ++ show (qtype qry) ++ "\n"
                     let idnt = identifier msg
                     erep <- resolver qry mempty
                     case erep of
@@ -250,7 +247,7 @@ worker Op{..} resolver = do
                                     (replyDNSMessage rep)
                                         { identifier = idnt
                                         }
-                            putLog $ toLogStr $ "R: " ++ intercalate "\n   " (map pprRR (answer msg')) ++ "\n"
+                            putLog $ toLogStr $ tid ++ " R: " ++ intercalate "\n   " (map pprRR (answer msg')) ++ "\n"
                             void $ send (encode msg', sa)
 
 mainLoop :: Options -> Op (ByteString, SockAddr) -> LookupEnv -> IO ()
