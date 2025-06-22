@@ -120,6 +120,7 @@ executable ddrd
     ghc-options:      -Wall -threaded
     build-depends:
         base,
+        async,
         bytestring,
         containers,
         dnsext-dnssec,
@@ -127,9 +128,11 @@ executable ddrd
         dnsext-dox,
         dnsext-svcb,
         dnsext-types,
+        fast-logger,
         iproute,
         network,
-        stm
+        stm,
+        unix
 
     if (os(windows) && impl(ghc >=9.0))
         ghc-options: -with-rtsopts=--io-manager=native

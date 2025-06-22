@@ -3,15 +3,32 @@
 
 module Main where
 
-import Control.Concurrent.STM (atomically)
+import Control.Concurrent (forkIO, myThreadId, threadDelay)
+import Control.Concurrent.Async (concurrently_)
+import Control.Concurrent.STM (
+    atomically,
+    newTBQueueIO,
+    readTBQueue,
+    writeTBQueue,
+ )
 import qualified Control.Exception as E
-import Control.Monad (void, when)
+import Control.Monad (forever, void, when)
 import Data.ByteString (ByteString)
+import Data.ByteString.Short ()
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.IP ()
-import Data.List (intercalate)
+import Data.List (intercalate, sort)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
+import Data.Maybe (fromMaybe, listToMaybe)
+import Data.String (fromString)
+import GHC.Conc.Sync (
+    ThreadStatus,
+    labelThread,
+    listThreads,
+    threadLabel,
+    threadStatus,
+ )
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
 import System.Console.GetOpt (
@@ -23,6 +40,8 @@ import System.Console.GetOpt (
  )
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
+import System.Log.FastLogger
+import System.Posix.Signals
 
 import DNS.Do53.Client (
     LookupConf (..),
@@ -46,9 +65,8 @@ import DNS.DoX.Client (
     toPipelineResolver,
  )
 import DNS.SEC (addResourceDataForDNSSEC)
-import DNS.SVCB (addResourceDataForSVCB)
+import DNS.SVCB (ALPN, addResourceDataForSVCB)
 import DNS.Types (
-    DNSError (..),
     DNSMessage (..),
     Domain,
     Question (..),
@@ -64,6 +82,7 @@ import DNS.Types.Encode (encode)
 data Options = Options
     { optHelp :: Bool
     , optDebug :: Bool
+    , optALPN :: Maybe ALPN
     }
 
 defaultOptions :: Options
@@ -71,6 +90,7 @@ defaultOptions =
     Options
         { optHelp = False
         , optDebug = False
+        , optALPN = Nothing
         }
 
 options :: [OptDescr (Options -> Options)]
@@ -85,6 +105,11 @@ options =
         ["debug"]
         (NoArg (\opts -> opts{optDebug = True}))
         "print debug info"
+    , Option
+        ['a']
+        ["alpn"]
+        (ReqArg (\s o -> o{optALPN = Just (fromString s)}) "<alpn>")
+        "specify ALPN to select SVCB entries"
     ]
 
 ----------------------------------------------------------------
@@ -141,8 +166,26 @@ pprRR ResourceRecord{..} = pprDomain rrname ++ " " ++ show rrtype ++ " " ++ show
 
 ----------------------------------------------------------------
 
+numberOfWorkers :: Int
+numberOfWorkers = 10
+
+labelMe :: String -> IO ()
+labelMe lbl = myThreadId >>= \tid -> labelThread tid lbl
+
+----------------------------------------------------------------
+
+data Op a = Op
+    { enqueue :: a -> IO ()
+    , dequeue :: IO a
+    , send :: a -> IO ()
+    , recv :: IO a
+    , wait :: IO ()
+    , putLog :: LogStr -> IO ()
+    }
+
 main :: IO ()
 main = do
+    labelMe "ddrd main"
     args <- getArgs
     (opts, ips) <- parseOpts args
     when (optHelp opts) showUsageAndExit
@@ -150,65 +193,100 @@ main = do
     runInitIO $ do
         addResourceDataForDNSSEC
         addResourceDataForSVCB
+    let logtyp
+            | optDebug opts = LogStderr 1024
+            | otherwise = LogNone
+    (putL, killLogger) <- newFastLogger1 logtyp
+    setHandlers putL
     ai <- serverResolve serverAddr serverPort
     E.bracket (serverSocket ai) close $ \s -> do
+        q <- newTBQueueIO 128
+        let op =
+                Op
+                    { enqueue = \bssa -> atomically $ writeTBQueue q bssa
+                    , dequeue = atomically $ readTBQueue q
+                    , send = \(bs, sa) -> void $ NSB.sendTo s bs sa
+                    , recv = NSB.recvFrom s 2048
+                    , wait = do
+                        putL "Waiting...\n"
+                        wait' <- waitReadSocketSTM s
+                        atomically wait'
+                        putL "Waiting...done\n"
+                    , putLog = putL
+                    }
+        void $ forkIO $ do
+            labelMe "reader"
+            reader op
         ref <- newIORef Map.empty
         let conf = makeConf ref ips
-        withLookupConf conf $ mainLoop opts s
+        withLookupConf conf $ mainLoop opts op
+    killLogger
 
-mainLoop :: Options -> Socket -> LookupEnv -> IO ()
-mainLoop opts s env = loop
+----------------------------------------------------------------
+
+reader :: Op (ByteString, SockAddr) -> IO ()
+reader Op{..} = forever (recv >>= enqueue)
+
+worker :: Op (ByteString, SockAddr) -> Resolver -> IO ()
+worker Op{..} resolver = do
+    mytid <- myThreadId
+    labelThread mytid "worker"
+    forever $ do
+        putLog $ toLogStr $ show mytid <> "...\n"
+        (bs, sa) <- dequeue
+        putLog $ toLogStr $ show mytid <> "...done\n"
+        case decode bs of
+            Left _ -> putLog "Decode error\n"
+            Right msg -> case question msg of
+                [] -> putLog "No questions\n"
+                qry : _ -> do
+                    putLog $ toLogStr $ "Q: " ++ pprDomain (qname qry) ++ " " ++ show (qtype qry) ++ "\n"
+                    let idnt = identifier msg
+                    erep <- resolver qry mempty
+                    case erep of
+                        Left _ -> putLog "No reply\n"
+                        Right rep -> do
+                            let msg' =
+                                    (replyDNSMessage rep)
+                                        { identifier = idnt
+                                        }
+                            putLog $ toLogStr $ "R: " ++ intercalate "\n   " (map pprRR (answer msg')) ++ "\n"
+                            void $ send (encode msg', sa)
+
+mainLoop :: Options -> Op (ByteString, SockAddr) -> LookupEnv -> IO ()
+mainLoop opts op@Op{..} env = loop
   where
     unsafeHead [] = error "unsafeHead"
     unsafeHead (x : _) = x
     loop = do
-        printDebug opts "Waiting..."
-        wait <- waitReadSocketSTM s
-        atomically wait
-        printDebug opts "Waiting...done"
-        mPiplineResolver <- selectSVCB <$> lookupSVCBInfo env
-        case mPiplineResolver of
-            Nothing -> printDebug opts "SVCB RR is not available"
-            Just si -> do
-                let ri = unsafeHead $ svcbInfoResolveInfos si
-                printDebug opts $
-                    "Running a pipeline resolver on " ++ show (svcbInfoALPN si) ++ " " ++ show (rinfoIP ri) ++ " " ++ show (rinfoPort ri)
-                let piplineResolver = unsafeHead $ toPipelineResolver si
-                piplineResolver (serverLoop opts s) `E.catch` ignore
+        wait
+        er <- lookupSVCBInfo env
+        case er of
+            Left e -> do
+                putLog $ toLogStr $ show e ++ "\n"
+                threadDelay 3000000
+            Right siss -> case selectSVCB (optALPN opts) siss of
+                Nothing -> do
+                    putLog "SVCB RR is not available\n"
+                    threadDelay 3000000
+                Just si -> do
+                    let ri = unsafeHead $ svcbInfoResolveInfos si
+                    putLog $
+                        toLogStr $
+                            "Running a pipeline resolver on " ++ show (svcbInfoALPN si) ++ " " ++ show (rinfoIP ri) ++ " " ++ show (rinfoPort ri) ++ "\n"
+                    let piplineResolver = unsafeHead $ toPipelineResolver si
+                    E.handle ignore $ piplineResolver $ \resolver -> do
+                        let runWorkers = foldr1 concurrently_ $ replicate numberOfWorkers $ worker op resolver
+                        runWorkers
         loop
-    ignore (E.SomeException se) = printDebug opts $ show se
-
-serverLoop :: Options -> Socket -> Resolver -> IO ()
-serverLoop opts s resolver = loop
-  where
-    loop = do
-        (bs, sa) <- NSB.recvFrom s 2048
-        sendReply bs sa
-        loop
-    sendReply bs sa =
-        case decode bs of
-            Left _ -> printDebug opts "Decode error"
-            Right msg -> case question msg of
-                [] -> printDebug opts "No questions"
-                q : _ -> do
-                    printDebug opts $ "Q: " ++ pprDomain (qname q) ++ " " ++ show (qtype q)
-                    let idnt = identifier msg
-                    eres <- resolver q mempty
-                    case eres of
-                        Left _ -> printDebug opts "No reply"
-                        Right res -> do
-                            let msg' =
-                                    (replyDNSMessage res)
-                                        { identifier = idnt
-                                        }
-                            printDebug opts $ "R: " ++ intercalate "\n   " (map pprRR (answer msg'))
-                            void $ NSB.sendTo s (encode msg') sa
+    ignore (E.SomeException se) = putLog $ toLogStr $ show se
 
 ----------------------------------------------------------------
 
-selectSVCB :: Either DNSError [[SVCBInfo]] -> Maybe SVCBInfo
-selectSVCB (Right ((si : _) : _)) = Just $ modifyForDDR si
-selectSVCB _ = Nothing
+selectSVCB :: Maybe ALPN -> [[SVCBInfo]] -> Maybe SVCBInfo
+selectSVCB (Just alpn) siss = modifyForDDR <$> listToMaybe (filter (\s -> svcbInfoALPN s == alpn) (concat siss))
+selectSVCB Nothing ((si : _) : _) = Just $ modifyForDDR si
+selectSVCB _ _ = Nothing
 
 ----------------------------------------------------------------
 
@@ -236,3 +314,24 @@ makeConf ref addrs =
         }
   where
     actions = lconfActions defaultLookupConf
+
+----------------------------------------------------------------
+
+threadSummary :: IO [(String, String, ThreadStatus)]
+threadSummary = (sort <$> listThreads) >>= mapM summary
+  where
+    summary t = do
+        let idstr = drop 9 $ show t
+        l <- fromMaybe "(no name)" <$> threadLabel t
+        s <- threadStatus t
+        return (idstr, l, s)
+
+setHandlers :: (LogStr -> IO ()) -> IO ()
+setHandlers putLog = do
+    void $ installHandler sigUSR1 infoHandler Nothing
+  where
+    infoHandler = Catch $ do
+        labelMe "USR1 signale handler"
+        threadSummary >>= mapM_ (putLog . toLogStr . showT)
+      where
+        showT (i, l, s) = i ++ " " ++ l ++ ": " ++ show s ++ "\n"
