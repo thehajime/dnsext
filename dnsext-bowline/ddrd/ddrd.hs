@@ -4,15 +4,19 @@
 module Main where
 
 import Control.Concurrent (forkIO, myThreadId, threadDelay)
-import Control.Concurrent.Async (concurrently_)
 import Control.Concurrent.STM (
+    STM,
+    TVar,
     atomically,
     newTBQueueIO,
+    newTVarIO,
     readTBQueue,
+    readTVar,
     writeTBQueue,
+    writeTVar,
  )
 import qualified Control.Exception as E
-import Control.Monad (forever, void, when)
+import Control.Monad (forever, replicateM_, void, when)
 import Data.ByteString (ByteString)
 import Data.ByteString.Short ()
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
@@ -176,7 +180,7 @@ labelMe lbl = myThreadId >>= \tid -> labelThread tid lbl
 
 data Op a = Op
     { enqueue :: a -> IO ()
-    , dequeue :: IO a
+    , dequeue :: STM a
     , send :: a -> IO ()
     , recv :: IO a
     , wait :: IO ()
@@ -204,7 +208,7 @@ main = do
         let op =
                 Op
                     { enqueue = \bssa -> atomically $ writeTBQueue q bssa
-                    , dequeue = atomically $ readTBQueue q
+                    , dequeue = readTBQueue q
                     , send = \(bs, sa) -> void $ NSB.sendTo s bs sa
                     , recv = NSB.recvFrom s 2048
                     , wait = do
@@ -225,13 +229,25 @@ main = do
 reader :: Op (ByteString, SockAddr) -> IO ()
 reader Op{..} = forever (recv >>= enqueue)
 
-worker :: Op (ByteString, SockAddr) -> Resolver -> IO ()
-worker Op{..} resolver = do
+worker :: Op (ByteString, SockAddr) -> TVar Bool -> Resolver -> IO ()
+worker Op{..} contvar resolver = do
     mytid <- myThreadId
     labelThread mytid "worker"
     let tid = drop 9 $ show mytid
-    forever $ do
-        (bs, sa) <- dequeue
+    loop tid
+  where
+    loop tid = do
+        mx <- atomically $ do
+            cont <- readTVar contvar
+            if cont
+                then
+                    Just <$> dequeue
+                else
+                    return Nothing
+        case mx of
+            Nothing -> return ()
+            Just x -> go tid x >> loop tid
+    go tid (bs, sa) = do
         case decode bs of
             Left _ -> putLog "Decode error\n"
             Right msg -> case question msg of
@@ -256,6 +272,10 @@ mainLoop opts op@Op{..} env = loop
     unsafeHead [] = error "unsafeHead"
     unsafeHead (x : _) = x
     loop = do
+        E.bracket (newTVarIO True) (\var -> atomically $ writeTVar var False) $ \contvar -> E.handle handler $ go contvar
+        loop
+    handler (E.SomeException se) = putLog $ toLogStr $ show se ++ "\n"
+    go contvar = do
         wait
         er <- lookupSVCBInfo env
         case er of
@@ -273,9 +293,8 @@ mainLoop opts op@Op{..} env = loop
                             "Running a pipeline resolver on " ++ show (svcbInfoALPN si) ++ " " ++ show (rinfoIP ri) ++ " " ++ show (rinfoPort ri) ++ "\n"
                     let piplineResolver = unsafeHead $ toPipelineResolver si
                     E.handle ignore $ piplineResolver $ \resolver -> do
-                        let runWorkers = foldr1 concurrently_ $ replicate numberOfWorkers $ worker op resolver
-                        runWorkers
-        loop
+                        replicateM_ numberOfWorkers $ void $ forkIO $ worker op contvar resolver
+                        worker op contvar resolver
     ignore (E.SomeException se) = putLog $ toLogStr $ show se
 
 ----------------------------------------------------------------
