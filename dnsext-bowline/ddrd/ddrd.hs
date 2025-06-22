@@ -42,6 +42,7 @@ import System.Console.GetOpt (
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import System.Log.FastLogger
+import System.Posix.Signals
 
 import DNS.Do53.Client (
     LookupConf (..),
@@ -185,6 +186,7 @@ main = do
             | optDebug opts = LogStderr 1024
             | otherwise = LogNone
     (putLog, killLogger) <- newFastLogger1 logtyp
+    setHandlers putLog
     ai <- serverResolve serverAddr serverPort
     E.bracket (serverSocket ai) close $ \s -> do
         let recv = NSB.recvFrom s 2048
@@ -218,9 +220,12 @@ reader recv q = forever $ do
 
 worker :: SendIO -> InpQ -> PutLog -> Resolver -> IO ()
 worker send q putLog resolver = do
-    myThreadId >>= \tid -> labelThread tid "worker"
+    mytid <- myThreadId
+    labelThread mytid "worker"
     forever $ do
+        putLog $ toLogStr $ show mytid <> "...\n"
         (bs, sa) <- atomically $ readTBQueue q
+        putLog $ toLogStr $ show mytid <> "...done\n"
         case decode bs of
             Left _ -> putLog "Decode error\n"
             Right msg -> case question msg of
@@ -245,7 +250,6 @@ mainLoop opts wait send q putLog env = loop
     unsafeHead [] = error "unsafeHead"
     unsafeHead (x : _) = x
     loop = do
-        printThreads putLog
         wait
         er <- lookupSVCBInfo env
         case er of
@@ -317,3 +321,11 @@ threadSummary = (sort <$> listThreads) >>= mapM summary
         l <- fromMaybe "(no name)" <$> threadLabel t
         s <- threadStatus t
         return (idstr, l, s)
+
+setHandlers :: PutLog -> IO ()
+setHandlers putLog = do
+    void $ installHandler sigUSR1 infoHandler Nothing
+  where
+    infoHandler = Catch $ do
+        myThreadId >>= \tid -> labelThread tid "Info signale handler"
+        printThreads putLog

@@ -131,7 +131,8 @@ executable ddrd
         fast-logger,
         iproute,
         network,
-        stm
+        stm,
+        unix
 
     if (os(windows) && impl(ghc >=9.0))
         ghc-options: -with-rtsopts=--io-manager=native
