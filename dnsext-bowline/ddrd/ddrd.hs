@@ -6,7 +6,6 @@ module Main where
 import Control.Concurrent (forkIO, myThreadId, threadDelay)
 import Control.Concurrent.Async (concurrently_)
 import Control.Concurrent.STM (
-    TBQueue,
     atomically,
     newTBQueueIO,
     readTBQueue,
@@ -170,11 +169,23 @@ pprRR ResourceRecord{..} = pprDomain rrname ++ " " ++ show rrtype ++ " " ++ show
 numberOfWorkers :: Int
 numberOfWorkers = 10
 
+labelMe :: String -> IO ()
+labelMe lbl = myThreadId >>= \tid -> labelThread tid lbl
+
 ----------------------------------------------------------------
+
+data Op a = Op
+    { enqueue :: a -> IO ()
+    , dequeue :: IO a
+    , send :: a -> IO ()
+    , recv :: IO a
+    , wait :: IO ()
+    , putLog :: LogStr -> IO ()
+    }
 
 main :: IO ()
 main = do
-    myThreadId >>= \tid -> labelThread tid "ddrd main"
+    labelMe "ddrd main"
     args <- getArgs
     (opts, ips) <- parseOpts args
     when (optHelp opts) showUsageAndExit
@@ -185,46 +196,44 @@ main = do
     let logtyp
             | optDebug opts = LogStderr 1024
             | otherwise = LogNone
-    (putLog, killLogger) <- newFastLogger1 logtyp
-    setHandlers putLog
+    (putL, killLogger) <- newFastLogger1 logtyp
+    setHandlers putL
     ai <- serverResolve serverAddr serverPort
     E.bracket (serverSocket ai) close $ \s -> do
-        let recv = NSB.recvFrom s 2048
-            send sa bs = void $ NSB.sendTo s bs sa
-            wait = do
-                putLog "Waiting...\n"
-                wait' <- waitReadSocketSTM s
-                atomically wait'
-                putLog "Waiting...done\n"
         q <- newTBQueueIO 128
+        let op =
+                Op
+                    { enqueue = \bssa -> atomically $ writeTBQueue q bssa
+                    , dequeue = atomically $ readTBQueue q
+                    , send = \(bs, sa) -> void $ NSB.sendTo s bs sa
+                    , recv = NSB.recvFrom s 2048
+                    , wait = do
+                        putL "Waiting...\n"
+                        wait' <- waitReadSocketSTM s
+                        atomically wait'
+                        putL "Waiting...done\n"
+                    , putLog = putL
+                    }
         void $ forkIO $ do
-            myThreadId >>= \tid -> labelThread tid "reader"
-            reader recv q
+            labelMe "reader"
+            reader op
         ref <- newIORef Map.empty
         let conf = makeConf ref ips
-        withLookupConf conf $ mainLoop opts wait send q putLog
+        withLookupConf conf $ mainLoop opts op
     killLogger
 
 ----------------------------------------------------------------
 
-type InpQ = TBQueue (ByteString, SockAddr)
-type SendIO = SockAddr -> ByteString -> IO ()
-type RecvIO = IO (ByteString, SockAddr)
-type WaitIO = IO ()
-type PutLog = LogStr -> IO ()
+reader :: Op (ByteString, SockAddr) -> IO ()
+reader Op{..} = forever (recv >>= enqueue)
 
-reader :: RecvIO -> InpQ -> IO ()
-reader recv q = forever $ do
-    x <- recv
-    atomically $ writeTBQueue q x
-
-worker :: SendIO -> InpQ -> PutLog -> Resolver -> IO ()
-worker send q putLog resolver = do
+worker :: Op (ByteString, SockAddr) -> Resolver -> IO ()
+worker Op{..} resolver = do
     mytid <- myThreadId
     labelThread mytid "worker"
     forever $ do
         putLog $ toLogStr $ show mytid <> "...\n"
-        (bs, sa) <- atomically $ readTBQueue q
+        (bs, sa) <- dequeue
         putLog $ toLogStr $ show mytid <> "...done\n"
         case decode bs of
             Left _ -> putLog "Decode error\n"
@@ -242,10 +251,10 @@ worker send q putLog resolver = do
                                         { identifier = idnt
                                         }
                             putLog $ toLogStr $ "R: " ++ intercalate "\n   " (map pprRR (answer msg')) ++ "\n"
-                            void $ send sa $ encode msg'
+                            void $ send (encode msg', sa)
 
-mainLoop :: Options -> WaitIO -> SendIO -> InpQ -> PutLog -> LookupEnv -> IO ()
-mainLoop opts wait send q putLog env = loop
+mainLoop :: Options -> Op (ByteString, SockAddr) -> LookupEnv -> IO ()
+mainLoop opts op@Op{..} env = loop
   where
     unsafeHead [] = error "unsafeHead"
     unsafeHead (x : _) = x
@@ -267,7 +276,7 @@ mainLoop opts wait send q putLog env = loop
                             "Running a pipeline resolver on " ++ show (svcbInfoALPN si) ++ " " ++ show (rinfoIP ri) ++ " " ++ show (rinfoPort ri) ++ "\n"
                     let piplineResolver = unsafeHead $ toPipelineResolver si
                     E.handle ignore $ piplineResolver $ \resolver -> do
-                        let runWorkers = foldr1 concurrently_ $ replicate numberOfWorkers $ worker send q putLog resolver
+                        let runWorkers = foldr1 concurrently_ $ replicate numberOfWorkers $ worker op resolver
                         runWorkers
         loop
     ignore (E.SomeException se) = putLog $ toLogStr $ show se
@@ -308,11 +317,6 @@ makeConf ref addrs =
 
 ----------------------------------------------------------------
 
-printThreads :: PutLog -> IO ()
-printThreads putLog = threadSummary >>= mapM_ (putLog . toLogStr . showT)
-  where
-    showT (i, l, s) = i ++ " " ++ l ++ ": " ++ show s ++ "\n"
-
 threadSummary :: IO [(String, String, ThreadStatus)]
 threadSummary = (sort <$> listThreads) >>= mapM summary
   where
@@ -322,10 +326,12 @@ threadSummary = (sort <$> listThreads) >>= mapM summary
         s <- threadStatus t
         return (idstr, l, s)
 
-setHandlers :: PutLog -> IO ()
+setHandlers :: (LogStr -> IO ()) -> IO ()
 setHandlers putLog = do
     void $ installHandler sigUSR1 infoHandler Nothing
   where
     infoHandler = Catch $ do
-        myThreadId >>= \tid -> labelThread tid "Info signale handler"
-        printThreads putLog
+        labelMe "USR1 signale handler"
+        threadSummary >>= mapM_ (putLog . toLogStr . showT)
+      where
+        showT (i, l, s) = i ++ " " ++ l ++ ": " ++ show s ++ "\n"
