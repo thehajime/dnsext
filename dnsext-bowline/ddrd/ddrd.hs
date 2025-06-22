@@ -3,7 +3,7 @@
 
 module Main where
 
-import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent (forkIO, myThreadId, threadDelay)
 import Control.Concurrent.Async (concurrently_)
 import Control.Concurrent.STM (
     TBQueue,
@@ -23,7 +23,13 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.String (fromString)
-import GHC.Conc.Sync (ThreadStatus, listThreads, threadLabel, threadStatus)
+import GHC.Conc.Sync (
+    ThreadStatus,
+    labelThread,
+    listThreads,
+    threadLabel,
+    threadStatus,
+ )
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
 import System.Console.GetOpt (
@@ -167,6 +173,7 @@ numberOfWorkers = 10
 
 main :: IO ()
 main = do
+    myThreadId >>= \tid -> labelThread tid "ddrd main"
     args <- getArgs
     (opts, ips) <- parseOpts args
     when (optHelp opts) showUsageAndExit
@@ -188,7 +195,9 @@ main = do
                 atomically wait'
                 putLog "Waiting...done\n"
         q <- newTBQueueIO 128
-        void $ forkIO $ reader recv q
+        void $ forkIO $ do
+            myThreadId >>= \tid -> labelThread tid "reader"
+            reader recv q
         ref <- newIORef Map.empty
         let conf = makeConf ref ips
         withLookupConf conf $ mainLoop opts wait send q putLog
@@ -208,25 +217,27 @@ reader recv q = forever $ do
     atomically $ writeTBQueue q x
 
 worker :: SendIO -> InpQ -> PutLog -> Resolver -> IO ()
-worker send q putLog resolver = forever $ do
-    (bs, sa) <- atomically $ readTBQueue q
-    case decode bs of
-        Left _ -> putLog "Decode error\n"
-        Right msg -> case question msg of
-            [] -> putLog "No questions\n"
-            qry : _ -> do
-                putLog $ toLogStr $ "Q: " ++ pprDomain (qname qry) ++ " " ++ show (qtype qry) ++ "\n"
-                let idnt = identifier msg
-                erep <- resolver qry mempty
-                case erep of
-                    Left _ -> putLog "No reply\n"
-                    Right rep -> do
-                        let msg' =
-                                (replyDNSMessage rep)
-                                    { identifier = idnt
-                                    }
-                        putLog $ toLogStr $ "R: " ++ intercalate "\n   " (map pprRR (answer msg')) ++ "\n"
-                        void $ send sa $ encode msg'
+worker send q putLog resolver = do
+    myThreadId >>= \tid -> labelThread tid "worker"
+    forever $ do
+        (bs, sa) <- atomically $ readTBQueue q
+        case decode bs of
+            Left _ -> putLog "Decode error\n"
+            Right msg -> case question msg of
+                [] -> putLog "No questions\n"
+                qry : _ -> do
+                    putLog $ toLogStr $ "Q: " ++ pprDomain (qname qry) ++ " " ++ show (qtype qry) ++ "\n"
+                    let idnt = identifier msg
+                    erep <- resolver qry mempty
+                    case erep of
+                        Left _ -> putLog "No reply\n"
+                        Right rep -> do
+                            let msg' =
+                                    (replyDNSMessage rep)
+                                        { identifier = idnt
+                                        }
+                            putLog $ toLogStr $ "R: " ++ intercalate "\n   " (map pprRR (answer msg')) ++ "\n"
+                            void $ send sa $ encode msg'
 
 mainLoop :: Options -> WaitIO -> SendIO -> InpQ -> PutLog -> LookupEnv -> IO ()
 mainLoop opts wait send q putLog env = loop
