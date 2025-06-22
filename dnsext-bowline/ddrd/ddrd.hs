@@ -240,31 +240,25 @@ worker Op{..} contvar resolver = do
         mx <- atomically $ do
             cont <- readTVar contvar
             if cont
-                then
-                    Just <$> dequeue
-                else
-                    return Nothing
+                then Just <$> dequeue
+                else return Nothing
         case mx of
             Nothing -> return ()
             Just x -> go tid x >> loop tid
-    go tid (bs, sa) = do
-        case decode bs of
-            Left _ -> putLog "Decode error\n"
-            Right msg -> case question msg of
-                [] -> putLog "No questions\n"
-                qry : _ -> do
-                    putLog $ toLogStr $ tid ++ " Q: " ++ pprDomain (qname qry) ++ " " ++ show (qtype qry) ++ "\n"
-                    let idnt = identifier msg
-                    erep <- resolver qry mempty
-                    case erep of
-                        Left _ -> putLog "No reply\n"
-                        Right rep -> do
-                            let msg' =
-                                    (replyDNSMessage rep)
-                                        { identifier = idnt
-                                        }
-                            putLog $ toLogStr $ tid ++ " R: " ++ intercalate "\n   " (map pprRR (answer msg')) ++ "\n"
-                            void $ send (encode msg', sa)
+    go tid (bs, sa) = case decode bs of
+        Left _ -> putLog "Decode error\n"
+        Right msg -> case question msg of
+            [] -> putLog "No questions\n"
+            qry : _ -> do
+                putLog $ toLogStr $ tid ++ " Q: " ++ pprDomain (qname qry) ++ " " ++ show (qtype qry) ++ "\n"
+                let idnt = identifier msg
+                erep <- resolver qry mempty
+                case erep of
+                    Left _ -> putLog "No reply\n"
+                    Right rep -> do
+                        let msg' = (replyDNSMessage rep){identifier = idnt}
+                        putLog $ toLogStr $ tid ++ " R: " ++ intercalate "\n   " (map pprRR (answer msg')) ++ "\n"
+                        void $ send (encode msg', sa)
 
 mainLoop :: Options -> Op (ByteString, SockAddr) -> LookupEnv -> IO ()
 mainLoop opts op@Op{..} env = loop
@@ -272,9 +266,8 @@ mainLoop opts op@Op{..} env = loop
     unsafeHead [] = error "unsafeHead"
     unsafeHead (x : _) = x
     loop = do
-        E.bracket (newTVarIO True) (\var -> atomically $ writeTVar var False) $ \contvar -> E.handle handler $ go contvar
+        E.bracket (newTVarIO True) (\var -> atomically $ writeTVar var False) $ \contvar -> E.handle ignore $ go contvar
         loop
-    handler (E.SomeException se) = putLog $ toLogStr $ show se ++ "\n"
     go contvar = do
         wait
         er <- lookupSVCBInfo env
@@ -292,10 +285,10 @@ mainLoop opts op@Op{..} env = loop
                         toLogStr $
                             "Running a pipeline resolver on " ++ show (svcbInfoALPN si) ++ " " ++ show (rinfoIP ri) ++ " " ++ show (rinfoPort ri) ++ "\n"
                     let piplineResolver = unsafeHead $ toPipelineResolver si
-                    E.handle ignore $ piplineResolver $ \resolver -> do
+                    piplineResolver $ \resolver -> do
                         replicateM_ numberOfWorkers $ void $ forkIO $ worker op contvar resolver
                         worker op contvar resolver
-    ignore (E.SomeException se) = putLog $ toLogStr $ show se
+    ignore (E.SomeException se) = putLog $ toLogStr $ show se ++ "\n"
 
 ----------------------------------------------------------------
 
