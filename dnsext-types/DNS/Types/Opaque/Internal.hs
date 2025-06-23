@@ -1,3 +1,5 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+
 module DNS.Types.Opaque.Internal where
 
 import qualified Data.ByteString.Char8 as C8
@@ -14,7 +16,7 @@ import DNS.Wire
 ----------------------------------------------------------------
 
 -- | Opaque data.
-newtype Opaque = Opaque ShortByteString deriving (Eq, Ord)
+newtype Opaque = Opaque ShortByteString deriving (Eq, Ord, Semigroup, Monoid)
 
 -- 8bit bytes. Don't use 'Text' since UTF8 uses the leftmost bit.
 
@@ -70,9 +72,6 @@ fromBase64 :: ByteString -> Either String Opaque
 fromBase64 = (Opaque . Short.toShort <$>) . B64.decode
 
 ----------------------------------------------------------------
-
-instance Semigroup Opaque where
-    Opaque x <> Opaque y = Opaque (x <> y)
 
 null :: Opaque -> Bool
 null (Opaque sbs) = Short.null sbs
