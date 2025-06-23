@@ -6,7 +6,6 @@ module DNS.Do53.VC (
 ) where
 
 import Control.Concurrent
-import Control.Concurrent.Async
 import Control.Concurrent.STM
 import qualified Control.Exception as E
 import qualified Data.ByteString as BS
@@ -25,6 +24,7 @@ import DNS.Do53.IO
 import DNS.Do53.Imports
 import DNS.Do53.Query
 import DNS.Do53.Types
+import DNS.ThreadStats
 import DNS.Types
 import DNS.Types.Decode
 
@@ -46,7 +46,9 @@ vcPersistentResolver tag send recv ResolveInfo{..} body = do
     inpQ <- newTQueueIO
     ref <- newIORef emp
     race_
-        (concurrently_ (sender inpQ) (recver ref))
+        "vcPersistentResolver: sender/receiver"
+        (concurrently_ "vcPersistentResolver:sender" (sender inpQ) "vcPersistentResolver:receiver" (recver ref))
+        "vcPersistentResolver: body"
         (body $ resolve inpQ ref)
   where
     emp = IM.empty :: IntMap RVar
