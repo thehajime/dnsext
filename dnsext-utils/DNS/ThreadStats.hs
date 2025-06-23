@@ -4,7 +4,8 @@ module DNS.ThreadStats where
 
 #if __GLASGOW_HASKELL__ >= 906
 
-import GHC.Conc.Sync (listThreads, labelThread, threadLabel, threadStatus)
+import GHC.Conc.Sync (labelThread, threadStatus)
+import qualified GHC.Conc.Sync as GHC
 import Control.Concurrent (ThreadId, myThreadId, threadDelay)
 import qualified Control.Concurrent as Concurrent
 import Control.Concurrent.Async (Async, asyncThreadId)
@@ -38,14 +39,14 @@ getThreadLabel = withName (pure "<no-label>") $ \tid n -> pure $ n ++ ": " ++ sh
   where
     withName nothing just = do
         tid <- myThreadId
-        maybe nothing (just tid) =<< threadLabel tid
+        maybe nothing (just tid) =<< GHC.threadLabel tid
 
 dumpThreads = do
-    ts <- mapM getName =<< listThreads
+    ts <- mapM getName =<< GHC.listThreads
     vs <- sequence [ dump tid n | (tid, Just n)  <- ts ]
     pure . map (uncurry (++)) $ sort vs
   where
-    getName tid = (,) tid <$> threadLabel tid
+    getName tid = (,) tid <$> GHC.threadLabel tid
     dump tid name = do
         st <- show <$> threadStatus tid
         let stid = showTid tid
@@ -67,6 +68,23 @@ dumpThreads = pure ["<not supported>"]
 dumper _ = forever $ threadDelay interval
   where
     interval = 3 * 1000 * 1000
+
+#endif
+
+---
+
+listThreads :: IO [ThreadId]
+threadLabel :: ThreadId -> IO (Maybe String)
+
+#if __GLASGOW_HASKELL__ >= 906
+
+listThreads = GHC.listThreads
+threadLabel = GHC.threadLabel
+
+#else
+
+listThreads = pure []
+threadLabel _ = pure Nothing
 
 #endif
 
