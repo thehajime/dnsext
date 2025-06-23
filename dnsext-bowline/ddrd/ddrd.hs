@@ -339,7 +339,7 @@ setHandlers putLog = do
     void $ installHandler sigUSR1 infoHandler Nothing
   where
     infoHandler = Catch $ do
-        labelMe "USR1 signale handler"
+        labelMe "USR1 signal handler"
         threadSummary >>= mapM_ (putLog . toLogStr . showT)
       where
         showT (i, l, s) = i ++ " " ++ l ++ ": " ++ show s ++ "\n"
