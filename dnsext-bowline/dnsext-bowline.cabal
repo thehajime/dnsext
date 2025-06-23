@@ -127,6 +127,7 @@ executable ddrd
         dnsext-dox,
         dnsext-svcb,
         dnsext-types,
+        dnsext-utils,
         fast-logger,
         iproute,
         network,

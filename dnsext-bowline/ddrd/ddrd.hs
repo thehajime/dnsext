@@ -29,8 +29,6 @@ import Data.String (fromString)
 import GHC.Conc.Sync (
     ThreadStatus,
     labelThread,
-    listThreads,
-    threadLabel,
     threadStatus,
  )
 import Network.Socket
@@ -70,6 +68,7 @@ import DNS.DoX.Client (
  )
 import DNS.SEC (addResourceDataForDNSSEC)
 import DNS.SVCB (ALPN, addResourceDataForSVCB)
+import DNS.ThreadStats (listThreads, threadLabel)
 import DNS.Types (
     DNSMessage (..),
     Domain,
