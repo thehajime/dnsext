@@ -10,7 +10,6 @@ module DNS.DoX.HTTP2 (
     http2cResolver,
     doHTTP,
     doHTTPOneshot,
-    withTimeout,
 )
 where
 
@@ -30,24 +29,9 @@ import Network.HTTP.Types
 import Network.HTTP2.Client (Client, Response, SendRequest, getResponseBodyChunk, requestBuilder, responseStatus)
 import qualified Network.HTTP2.Client as H2
 import qualified Network.HTTP2.TLS.Client as H2TLS
-import System.Timeout (timeout)
 
 import DNS.DoX.Imports
 import DNS.DoX.TLS
-
-withTimeout :: ResolveInfo -> IO (Either DNSError Reply) -> IO (Either DNSError Reply)
-withTimeout ResolveInfo{..} action = do
-    mres <- timeout (ractionTimeoutTime rinfoActions) action
-    case mres of
-        Nothing -> return $ Left TimeoutExpired
-        Just res -> return res
-
-withTimeout' :: ResolveInfo -> IO a -> IO a
-withTimeout' ResolveInfo{..} action = do
-    mres <- timeout (ractionTimeoutTime rinfoActions) action
-    case mres of
-        Nothing -> E.throwIO TimeoutExpired
-        Just res -> return res
 
 http2PersistentResolver :: PersistentResolver
 http2PersistentResolver ri@ResolveInfo{..} body = toDNSError "http2PersistentResolver" $ do
@@ -66,9 +50,8 @@ http2Resolver :: OneshotResolver
 http2Resolver ri@ResolveInfo{..} q qctl = toDNSError "http2Resolver" $ do
     settings <- makeSettings ri tag
     ident <- ractionGenId rinfoActions
-    withTimeout ri $
-        H2TLS.runWithConfig config settings ipstr rinfoPort $
-            doHTTPOneshot tag ident ri q qctl
+    H2TLS.runWithConfig config settings ipstr rinfoPort $
+        doHTTPOneshot tag ident ri q qctl
   where
     tag = nameTag ri "H2"
     ipstr = show rinfoIP
@@ -90,9 +73,8 @@ http2cResolver :: OneshotResolver
 http2cResolver ri@ResolveInfo{..} q qctl = toDNSError "http2cResolver" $ do
     let tag = nameTag ri "H2C"
     ident <- ractionGenId rinfoActions
-    withTimeout ri $
-        H2TLS.runH2CWithConfig config H2TLS.defaultSettings ipstr rinfoPort $
-            doHTTPOneshot tag ident ri q qctl
+    H2TLS.runH2CWithConfig config H2TLS.defaultSettings ipstr rinfoPort $
+        doHTTPOneshot tag ident ri q qctl
   where
     ipstr = show rinfoIP
     -- HTTP :authority
@@ -153,7 +135,7 @@ doHTTPOneshot
     -> Client (Either DNSError Reply)
 doHTTPOneshot tag ident ri@ResolveInfo{..} q qctl sendRequest _aux = do
     ractionLog rinfoActions Log.DEMO Nothing [qtag]
-    resolv tag ident ri sendRequest q qctl
+    withTimeout ri $ resolv tag ident ri sendRequest q qctl
   where
     ~qtag = queryTag q tag
 

@@ -4,18 +4,20 @@
 module DNS.DoX.TLS where
 
 import Codec.Serialise
+import qualified Control.Exception as E
 import Data.ByteString.Char8 ()
 import qualified Data.ByteString.Lazy as BL
 import Data.Either (rights)
 import qualified Network.HTTP2.TLS.Client as H2TLS
 import qualified Network.HTTP2.TLS.Internal as H2TLS
 import Network.TLS
+import System.Timeout (timeout)
 
 import DNS.Do53.Internal
 import DNS.DoX.Imports
-import qualified DNS.Log as Log
-
 import DNS.DoX.SAN
+import qualified DNS.Log as Log
+import DNS.Types
 
 tlsPersistentResolver :: PersistentResolver
 tlsPersistentResolver ri@ResolveInfo{..} body = toDNSError "tlsPersistentResolver" $ do
@@ -23,7 +25,7 @@ tlsPersistentResolver ri@ResolveInfo{..} body = toDNSError "tlsPersistentResolve
     -- Using a fresh connection
     H2TLS.runTLS settings (show rinfoIP) rinfoPort "dot" $ \ctx _ _ -> do
         let sendDoT = sendVC $ H2TLS.sendManyTLS ctx
-            recvDoT = recvVC rinfoVCLimit $ H2TLS.recvTLS ctx
+            recvDoT = withTimeout' ri $ recvVC rinfoVCLimit $ H2TLS.recvTLS ctx
         vcPersistentResolver tag sendDoT recvDoT ri body
   where
     tag = nameTag ri "TLS"
@@ -34,7 +36,8 @@ makeSettings ResolveInfo{..} tag = do
     return $
         H2TLS.defaultSettings
             { H2TLS.settingsValidateCert = ractionValidate rinfoActions
-            , H2TLS.settingsOnServerCertificate = makeOnServerCertificate (ractionLog rinfoActions Log.DEMO Nothing . (:[])) $ ractionServerAltName rinfoActions
+            , H2TLS.settingsOnServerCertificate =
+                makeOnServerCertificate (ractionLog rinfoActions Log.DEMO Nothing . (: [])) $ ractionServerAltName rinfoActions
             , H2TLS.settingsUseEarlyData = ractionUseEarlyData rinfoActions
             , -- TLS SNI
               H2TLS.settingsServerNameOverride = rinfoServerName
@@ -58,6 +61,8 @@ makeSettings ResolveInfo{..} tag = do
                         Just x -> show x
                     ~msg = ver ++ "(" ++ mode ++ ")"
                 ractionOnConnectionInfo rinfoActions tag msg
+            , -- intentionally 10 times larger
+              H2TLS.settingsTimeout = ractionTimeoutTime rinfoActions `div` 100000
             }
 
 tlsResolver :: OneshotResolver
@@ -66,7 +71,21 @@ tlsResolver ri@ResolveInfo{..} q qctl = toDNSError "tlsResolver" $ do
     -- Using a fresh connection
     H2TLS.runTLS settings (show rinfoIP) rinfoPort "dot" $ \ctx _ _ -> do
         let sendDoT = sendVC $ H2TLS.sendManyTLS ctx
-            recvDoT = recvVC rinfoVCLimit $ H2TLS.recvTLS ctx
+            recvDoT = withTimeout' ri $ recvVC rinfoVCLimit $ H2TLS.recvTLS ctx
         vcResolver tag sendDoT recvDoT ri q qctl
   where
     tag = nameTag ri "TLS"
+
+withTimeout :: ResolveInfo -> IO (Either DNSError Reply) -> IO (Either DNSError Reply)
+withTimeout ResolveInfo{..} action = do
+    mres <- timeout (ractionTimeoutTime rinfoActions) action
+    case mres of
+        Nothing -> return $ Left TimeoutExpired
+        Just res -> return res
+
+withTimeout' :: ResolveInfo -> IO a -> IO a
+withTimeout' ResolveInfo{..} action = do
+    mres <- timeout (ractionTimeoutTime rinfoActions) action
+    case mres of
+        Nothing -> E.throwIO TimeoutExpired
+        Just res -> return res

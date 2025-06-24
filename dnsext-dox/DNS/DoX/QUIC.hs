@@ -13,9 +13,9 @@ import Network.QUIC.Client
 import Network.QUIC.Internal hiding (Recv, shared)
 import qualified Network.TLS as TLS
 
-import DNS.DoX.HTTP2
 import DNS.DoX.Imports
 import DNS.DoX.SAN
+import DNS.DoX.TLS
 import qualified DNS.Log as Log
 
 quicPersistentResolver :: PersistentResolver
@@ -81,7 +81,8 @@ getQUICParams ResolveInfo{..} tag alpn0 = do
             , ccALPN = \_ -> return $ Just [alpn0]
             , ccDebugLog = False
             , ccValidate = ractionValidate rinfoActions
-            , ccOnServerCertificate = makeOnServerCertificate (ractionLog rinfoActions Log.DEMO Nothing . (:[])) $ ractionServerAltName rinfoActions
+            , ccOnServerCertificate =
+                makeOnServerCertificate (ractionLog rinfoActions Log.DEMO Nothing . (: [])) $ ractionServerAltName rinfoActions
             , ccResumption = rinfo
             , ccUse0RTT = ractionUseEarlyData rinfoActions
             , ccKeyLog = ractionKeyLog rinfoActions
