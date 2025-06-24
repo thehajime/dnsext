@@ -4,6 +4,7 @@
 module Main where
 
 import Control.Concurrent (forkIO, myThreadId, threadDelay)
+import Control.Concurrent.Async (concurrently_)
 import Control.Concurrent.STM (
     STM,
     TVar,
@@ -16,7 +17,7 @@ import Control.Concurrent.STM (
     writeTVar,
  )
 import qualified Control.Exception as E
-import Control.Monad (forever, replicateM_, void, when)
+import Control.Monad (forever, void, when)
 import Data.ByteString (ByteString)
 import Data.ByteString.Short ()
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
@@ -285,8 +286,8 @@ mainLoop opts op@Op{..} env = loop
                             "Running a pipeline resolver on " ++ show (svcbInfoALPN si) ++ " " ++ show (rinfoIP ri) ++ " " ++ show (rinfoPort ri) ++ "\n"
                     let piplineResolver = unsafeHead $ toPipelineResolver si
                     piplineResolver $ \resolver -> do
-                        replicateM_ numberOfWorkers $ void $ forkIO $ worker op contvar resolver
-                        worker op contvar resolver
+                        let runWorkers = foldr1 concurrently_ $ replicate numberOfWorkers $ worker op contvar resolver
+                        runWorkers
     ignore (E.SomeException se) = putLog $ toLogStr $ show se ++ "\n"
 
 ----------------------------------------------------------------
