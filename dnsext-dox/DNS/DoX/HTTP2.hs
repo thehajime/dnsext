@@ -42,6 +42,13 @@ withTimeout ResolveInfo{..} action = do
         Nothing -> return $ Left TimeoutExpired
         Just res -> return res
 
+withTimeout' :: ResolveInfo -> IO a -> IO a
+withTimeout' ResolveInfo{..} action = do
+    mres <- timeout (ractionTimeoutTime rinfoActions) action
+    case mres of
+        Nothing -> E.throwIO TimeoutExpired
+        Just res -> return res
+
 http2PersistentResolver :: PersistentResolver
 http2PersistentResolver ri@ResolveInfo{..} body = toDNSError "http2PersistentResolver" $ do
     -- TLS SNI
@@ -135,7 +142,7 @@ doHTTP
     -> (Resolver -> IO a)
     -> Client a
 doHTTP tag ident ri body sendRequest _aux =
-    body $ resolv tag ident ri sendRequest
+    body $ \q ctl -> withTimeout' ri $ resolv tag ident ri sendRequest q ctl
 
 doHTTPOneshot
     :: NameTag
