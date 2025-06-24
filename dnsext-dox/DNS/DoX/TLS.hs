@@ -13,6 +13,7 @@ import Network.TLS
 
 import DNS.Do53.Internal
 import DNS.DoX.Imports
+import qualified DNS.Log as Log
 
 import DNS.DoX.SAN
 
@@ -33,7 +34,7 @@ makeSettings ResolveInfo{..} tag = do
     return $
         H2TLS.defaultSettings
             { H2TLS.settingsValidateCert = ractionValidate rinfoActions
-            , H2TLS.settingsOnServerCertificate = makeOnServerCertificate $ ractionServerAltName rinfoActions
+            , H2TLS.settingsOnServerCertificate = makeOnServerCertificate (ractionLog rinfoActions Log.DEMO Nothing . (:[])) $ ractionServerAltName rinfoActions
             , H2TLS.settingsUseEarlyData = ractionUseEarlyData rinfoActions
             , -- TLS SNI
               H2TLS.settingsServerNameOverride = rinfoServerName

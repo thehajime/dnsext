@@ -15,12 +15,12 @@ import Data.X509 (
 import Data.X509.Validation (FailedReason (..), validateDefault)
 import Network.TLS (CertificateChain (..), OnServerCertificate)
 
-makeOnServerCertificate :: Maybe IP -> OnServerCertificate
-makeOnServerCertificate Nothing = validateDefault
-makeOnServerCertificate (Just ip) = f
+makeOnServerCertificate :: (String -> IO ()) -> Maybe IP -> OnServerCertificate
+makeOnServerCertificate _ Nothing = validateDefault
+makeOnServerCertificate logLn (Just ip) = f
   where
     f caStore validCache sid cc
-        | any (isTrusted ip) defaultTrusted = return []
+        | any (isTrusted ip) defaultTrusted = logLn (show ip ++ ": validation skipped (rfc9462 opportunistic discovery)") >> return []
         | ip `elem` ips = validateDefault caStore validCache sid cc
         | otherwise = return [InvalidName $ show ip ++ " is not included in " ++ show ips]
       where
