@@ -19,6 +19,8 @@ Futher reading:
 
 ### Basic
 
+Specify a target domain optically plus record type. This pair can also be specified two times or more:
+
 ```
 % dug www.iij.ad.jp a www.iijlab.net aaaa
 ;; 127.0.0.1#53/UDP, Tx:42bytes, Rx:58bytes
@@ -64,7 +66,9 @@ sh3.iijlab.net.	3600(1 hour)	IN	AAAA	2001:240:bb82:2706::1:49
 
 ```
 
-### DNS over X (TLS, QUIC, H2, H3)
+### DNS over TLS, QUIC, H2 and H3
+
+Specify `dot`, `doq`, `h2` or `h3` to `-d`:
 
 ```
 % dug 8.8.8.8 -d h2 www.iij.ad.jp a
@@ -111,9 +115,11 @@ www.iij.ad.jp.	198(3 mins)	IN	A	202.232.2.180
 
 ### DDR (Discovery of Designated Resolvers)
 
+Specify `auto` to `-d`:
+
 ```
-% dug 1.1.1.1 -d auto -v www.iijlab.net aaaa
-    query "_dns.resolver.arpa." SVCB to 127.0.0.1#53/UDP
+% dug @1.1.1.1 -d auto -v www.iijlab.net aaaa
+    query "_dns.resolver.arpa." SVCB to 1.1.1.1#53/UDP
 RD_SVCB {
     svcb_priority = 1
   , svcb_target = "one.one.one.one."
@@ -131,13 +137,36 @@ RD_SVCB {
       , port=853
       , ipv4hint=[1.1.1.1,1.0.0.1]
       , ipv6hint=[2606:4700:4700::1111,2606:4700:4700::1001]}}
-127.0.0.1: validation skipped (rfc9462 opportunistic discovery)
-127.0.0.1: validation skipped (rfc9462 opportunistic discovery)
-127.0.0.1: validation skipped (rfc9462 opportunistic discovery)
-127.0.0.1: validation skipped (rfc9462 opportunistic discovery)
+;; 2606:4700:4700::1001#443/H2, Tx:43bytes, Rx:95bytes
+;; HEADER SECTION:
+;Standard query, NoError, id: 22308
+;Flags: Recursion Desired, Recursion Available
+
+
+;; OPTIONAL PSEUDO EDNS SECTION:
+;Version: 0, UDP: 1232, DNSSEC OK: False, Data:[EDNSError{ info-code=18 extra-text="" [\# 0 ] }]
+
+;; QUESTION SECTION:
+;www.iijlab.net.		IN	AAAA
+
+;; ANSWER SECTION:
+www.iijlab.net.	3596(59 mins)	IN	CNAME	sh3.iijlab.net.
+sh3.iijlab.net.	3596(59 mins)	IN	AAAA	2001:240:bb82:2706::1:49
+
+;; AUTHORITY SECTION:
+
+;; ADDITIONAL SECTION:
+
+;; 274usec
+1.0.0.1#443/H2: v1.3(FullHandshake)
+1.1.1.1#443/H2: v1.3(FullHandshake)
+2606:4700:4700::1001#443/H2: v1.3(FullHandshake)
+2606:4700:4700::1111#443/H2: v1.3(FullHandshake)
 ```
 
 ## Iterative query
+
+Specify `-i`:
 
 ```
 % dug www.iij.ad.jp -vv -i
