@@ -19,7 +19,7 @@ rank: 4
 * Execute `ddrd` with IP addresses of unencrypted DNS servers which provides SVCB RR.
 
 ```
-% ddrd 8.8.8.8 -d
+% sudo ddrd 8.8.8.8 -d
 ```
 
 This binds 127.0.0.1:53. If executed with the `-d` option, `ddrd` displays debug logs. ALPN (`dot`, `doq`, `h2`, `h3`) can be specified with the `-a` option to select your favorite encrypted connection.
