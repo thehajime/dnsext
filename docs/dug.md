@@ -1,12 +1,12 @@
 ---
 layout: default
 title: dug
-rank: 2
+rank: 3
 ---
 
-# `dug`: a stub resolver command
+# `dug`
 
-`dug` is a dig-like command. There is two modes:
+`dug` is a stub resolver command like `dig`. There is two modes:
 
 - Recursive query lik `dig`
 - Iterative query to visualize the algorithm used in `bowline`
