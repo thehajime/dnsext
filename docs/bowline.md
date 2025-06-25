@@ -29,6 +29,8 @@ rank: 2
 % sudo bowline bowline.conf
 ```
 
+If `bowline` runs well, a monitor console is provided via stdin/stdout. Type `help` to know its commands.
+
 ## Web API
 
 Send `GET` to the following path:
