@@ -17,14 +17,28 @@ rank: 2
 * DNSTAP for logging
 * Web API (for reloading etc)
 
-## Usage
+## Configuration
+
+* [`bowline.conf`](https://github.com/iijlab/dnsext/blob/main/dnsext-bowline/bowline/bowline.conf)
+* [`local-example.conf`](https://github.com/iijlab/dnsext/blob/main/dnsext-bowline/bowline/local-example.conf)
+* [`stub-example.conf`](https://github.com/iijlab/dnsext/blob/main/dnsext-bowline/bowline/stub-example.conf)
+
+## Executing
 
 ```
 % sudo bowline bowline.conf
 ```
 
-## Configuration
+## Web API
 
-* [`bowline.conf`](https://github.com/iijlab/dnsext/blob/main/dnsext-bowline/bowline/bowline.conf).
-* [`local-example.conf`](https://github.com/iijlab/dnsext/blob/main/dnsext-bowline/bowline/local-example.conf).
-* [`stub-example.conf`](https://github.com/iijlab/dnsext/blob/main/dnsext-bowline/bowline/stub-example.conf).
+Send `GET` to the following path:
+
+* `/metrics`: get stats
+* `/stats`: get stats
+* `/wstats`: TBD
+* `/reopen-log`: reopen a log file
+* `/reload`: reload
+* `/keep-cache`: Reloading with the cache kept
+* `/quit`: quit
+* `/help`: display help
+* `/`: display help
