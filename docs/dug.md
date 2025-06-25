@@ -1,3 +1,9 @@
+---
+layout: default
+title: dug
+rank: 2
+---
+
 # `dug`: a stub resolver command
 
 `dug` is a dig-like command. There is two modes:

@@ -1,3 +1,7 @@
+layout: default
+title: dnsext
+rank: 1
+
 # DNS stack written in Haskell
 
 - `bowline`: a full resolver server (cache server)
