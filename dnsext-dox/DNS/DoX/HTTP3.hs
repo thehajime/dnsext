@@ -12,6 +12,7 @@ import qualified Network.QUIC.Client as QUIC
 import DNS.DoX.HTTP2
 import DNS.DoX.Imports
 import DNS.DoX.QUIC
+import DNS.DoX.TLS
 
 http3PersistentResolver :: PersistentResolver
 http3PersistentResolver ri@ResolveInfo{..} body = do

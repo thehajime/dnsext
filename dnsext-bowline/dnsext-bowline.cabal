@@ -120,6 +120,7 @@ executable ddrd
     ghc-options:      -Wall -threaded
     build-depends:
         base,
+        async,
         bytestring,
         containers,
         dnsext-dnssec,
