@@ -1,6 +1,6 @@
 ---
 layout: default
-title: dnsext
+title: dnsext-*
 rank: 5
 ---
 
