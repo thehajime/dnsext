@@ -16,6 +16,7 @@ rank: 2
 * stub-zone, local-zone, local-data
 * DNSTAP for logging
 * Web API (for reloading etc)
+* Monitor console
 
 ## Configuration
 
