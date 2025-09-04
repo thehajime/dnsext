@@ -108,7 +108,7 @@ jobs:
       if: matrix.ghc == '9.6'
       run: |
         mkdir dist
-        for name in bowline dug ; do
+        for name in bowline dug ddrd ; do
           cp -L $(cabal list-bin ./dnsext-bowline:$name) dist/$name-${{ matrix.osname }}-${{ matrix.arch }}
           strip dist/$name-${{ matrix.osname }}-${{ matrix.arch }}
           ls -l dist/$name-${{ matrix.osname }}-${{ matrix.arch }}
